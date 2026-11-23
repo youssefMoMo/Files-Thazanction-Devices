@@ -431,7 +431,7 @@ fn validate_filename(name: &str) -> AppResult<()> {
         .split('.')
         .next()
         .unwrap_or_default()
-        .trim_end_matches(|character| character == ' ' || character == '.')
+        .trim_end_matches([' ', '.'])
         .to_ascii_uppercase();
     let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || (base.len() == 4
