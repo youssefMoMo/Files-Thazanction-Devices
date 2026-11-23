@@ -1,0 +1,4 @@
+LAN Transfer Core
+Copyright 2026 [اسم صاحب المشروع]. All rights reserved, subject to the Apache License, Version 2.0.
+
+This project uses third-party Rust crates. Their license and attribution notices remain applicable. Consult each crate's package metadata and the Cargo registry for the full list of notices applicable to a particular build.

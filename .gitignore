@@ -1,0 +1,9 @@
+/target/
+*.part
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12

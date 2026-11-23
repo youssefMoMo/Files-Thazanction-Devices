@@ -1,0 +1,130 @@
+name: Signed Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-and-sign:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
+
+      - name: Generate dependency lockfile when not committed yet
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath 'Cargo.lock')) {
+            cargo +1.100.0 generate-lockfile
+          }
+
+      - name: Verify formatting
+        run: cargo +1.100.0 fmt --check
+
+      - name: Run tests
+        run: cargo +1.100.0 test --locked --all-targets
+
+      - name: Build release executable
+        run: cargo +1.100.0 build --locked --release
+
+      - name: Prepare unsigned executable for the trusted signing service
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'target/release/lan-transfer-core.exe'
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "Expected release executable not found: $source"
+          }
+          New-Item -ItemType Directory -Force -Path unsigned | Out-Null
+          Copy-Item -LiteralPath $source -Destination 'unsigned/lan-transfer-core.exe'
+
+      - name: Upload unsigned build to GitHub Actions artifact storage
+        id: upload-unsigned
+        uses: actions/upload-artifact@v7
+        with:
+          name: lan-transfer-core-unsigned-${{ github.sha }}
+          path: unsigned/lan-transfer-core.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Require trusted signing configuration
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+        run: |
+          $required = @{
+            SIGNPATH_API_TOKEN = $env:SIGNPATH_API_TOKEN
+            SIGNPATH_ORGANIZATION_ID = $env:SIGNPATH_ORGANIZATION_ID
+            SIGNPATH_PROJECT_SLUG = $env:SIGNPATH_PROJECT_SLUG
+            SIGNPATH_SIGNING_POLICY_SLUG = $env:SIGNPATH_SIGNING_POLICY_SLUG
+          }
+          $missing = $required.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } | ForEach-Object { $_.Key }
+          if ($missing) {
+            throw "Trusted signing is not configured. Missing GitHub secret/variables: $($missing -join ', '). No unsigned release will be published. See docs/smart-app-control.md."
+          }
+
+      - name: Submit artifact for trusted Authenticode signing
+        id: sign
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: ${{ github.workspace }}\signed
+          skip-decompress: true
+
+      - name: Verify every executable signature and assemble release package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $signedExe = 'signed/lan-transfer-core.exe'
+          if (-not (Test-Path -LiteralPath $signedExe -PathType Leaf)) {
+            throw "Trusted signing returned no executable at '$signedExe'."
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -LiteralPath $signedExe -Destination 'dist/lan-transfer-core.exe'
+          Copy-Item -LiteralPath README.md, LICENSE, NOTICE, PRIVACY.md -Destination dist
+          Copy-Item -LiteralPath docs/smart-app-control.md -Destination 'dist/SMART-APP-CONTROL.txt'
+
+          & ./scripts/Verify-Authenticode.ps1 -Directory dist
+
+          $version = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } else { 'workflow-' + $env:GITHUB_SHA.Substring(0, 12) }
+          @(
+            "Version: $version"
+            "Commit: $env:GITHUB_SHA"
+            "Rust: 1.100.0"
+            'Platform: x86_64-pc-windows-msvc'
+            'Signing: Authenticode signature verified by release workflow'
+          ) | Set-Content -LiteralPath 'dist/BUILD-INFO.txt' -Encoding utf8
+
+          $hash = (Get-FileHash -LiteralPath 'dist/lan-transfer-core.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  lan-transfer-core.exe" | Set-Content -LiteralPath 'dist/SHA256SUMS.txt' -Encoding ascii
+          Compress-Archive -Path 'dist/*' -DestinationPath "lan-transfer-core-$version-windows-x64.zip" -Force
+
+      - name: Upload signed release package
+        uses: actions/upload-artifact@v7
+        with:
+          name: lan-transfer-core-signed-windows-x64
+          path: lan-transfer-core-*-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
