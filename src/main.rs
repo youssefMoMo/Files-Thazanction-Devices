@@ -2,8 +2,6 @@
 
 use std::path::Path;
 
-use zeroize::Zeroizing;
-
 use lan_transfer_core::{DEFAULT_PORT, transfer};
 
 fn print_usage() {

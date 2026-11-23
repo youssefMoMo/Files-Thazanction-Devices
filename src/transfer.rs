@@ -133,12 +133,10 @@ pub fn run_receive(bind: &str, output_directory: &Path) -> AppResult<()> {
 }
 
 pub fn run_send(receiver: &str, file_path: &Path) -> AppResult<()> {
-    print!("Enter the one-time pairing code: ");
-    io::stdout().flush()?;
-    let mut code = String::new();
-    io::stdin().read_line(&mut code)?;
+    let code = zeroize::Zeroizing::new(rpassword::prompt_password(
+        "Enter the one-time pairing code: ",
+    )?);
     let secret = PairingSecret::from_code(code.trim())?;
-    code.clear();
     let file_path = file_path.canonicalize()?;
     let mut source_file = File::open(&file_path)?;
     let metadata = source_file.metadata()?;
