@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
-use crate::pairing::PairingSecret;
-use crate::protocol::{accept_secure, connect_secure, set_handshake_timeouts, SecureChannel};
 use crate::AppResult;
+use crate::pairing::PairingSecret;
+use crate::protocol::{SecureChannel, accept_secure, connect_secure, set_handshake_timeouts};
 
 const PAIRING_TTL: Duration = Duration::from_secs(5 * 60);
 const MAX_BAD_CONNECTIONS: u32 = 8;
@@ -48,7 +48,9 @@ pub fn run_receive(bind: &str, output_directory: &Path) -> AppResult<()> {
     println!("Enter this one-time pairing code on the sending computer:");
     println!("\n  {}\n", secret.to_code());
     println!("The code expires in 5 minutes and is consumed by the first authenticated sender.");
-    println!("No router/Internet relay is used. Use a LAN IP address and allow the port only on your private network.");
+    println!(
+        "No router/Internet relay is used. Use a LAN IP address and allow the port only on your private network."
+    );
 
     let mut rejected_connections = 0_u32;
     let mut accepted_channel: Option<SecureChannel> = None;
@@ -96,7 +98,9 @@ pub fn run_receive(bind: &str, output_directory: &Path) -> AppResult<()> {
     channel.use_transfer_timeouts()?;
 
     let metadata = receive_metadata(&mut channel)?;
-    if let Err(error) = validate_filename(&metadata.name).and_then(|()| validate_extension(&metadata.name)) {
+    if let Err(error) =
+        validate_filename(&metadata.name).and_then(|()| validate_extension(&metadata.name))
+    {
         send_decline(&mut channel)?;
         return Err(error);
     }
@@ -121,10 +125,12 @@ pub fn run_receive(bind: &str, output_directory: &Path) -> AppResult<()> {
 
     channel.send(&[MSG_ACCEPT])?;
     let saved_path = receive_file(&mut channel, &output_directory, &metadata)?;
-    println!("\nTransfer completed and verified: {}", saved_path.display());
+    println!(
+        "\nTransfer completed and verified: {}",
+        saved_path.display()
+    );
     Ok(())
 }
-
 
 pub fn run_send(receiver: &str, file_path: &Path) -> AppResult<()> {
     print!("Enter the one-time pairing code: ");
@@ -160,7 +166,13 @@ pub fn run_send(receiver: &str, file_path: &Path) -> AppResult<()> {
     channel.use_transfer_timeouts()?;
     println!("Encrypted pairing authenticated.");
 
-    send_metadata(&mut channel, &FileMetadata { name, size: metadata.len() })?;
+    send_metadata(
+        &mut channel,
+        &FileMetadata {
+            name,
+            size: metadata.len(),
+        },
+    )?;
     match channel.receive()?.as_slice() {
         [MSG_ACCEPT] => {}
         [MSG_DECLINE] => return Err("the receiver declined the file".into()),
@@ -168,7 +180,11 @@ pub fn run_send(receiver: &str, file_path: &Path) -> AppResult<()> {
     }
 
     let digest = send_file(&mut channel, &mut source_file, metadata.len())?;
-    println!("Sent {} bytes; SHA-256 {}", metadata.len(), hex_digest(&digest));
+    println!(
+        "Sent {} bytes; SHA-256 {}",
+        metadata.len(),
+        hex_digest(&digest)
+    );
     match channel.receive()?.as_slice() {
         [MSG_TRANSFER_COMPLETE] => {
             println!("Receiver verified the file successfully.");
@@ -210,7 +226,11 @@ fn send_decline(channel: &mut SecureChannel) -> AppResult<()> {
     channel.send(&[MSG_DECLINE])
 }
 
-fn send_file(channel: &mut SecureChannel, file: &mut File, expected_size: u64) -> AppResult<[u8; 32]> {
+fn send_file(
+    channel: &mut SecureChannel,
+    file: &mut File,
+    expected_size: u64,
+) -> AppResult<[u8; 32]> {
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; CHUNK_SIZE];
     let mut sent = 0_u64;
@@ -227,7 +247,8 @@ fn send_file(channel: &mut SecureChannel, file: &mut File, expected_size: u64) -
         message.push(MSG_FILE_CHUNK);
         message.extend_from_slice(&buffer[..count]);
         channel.send(&message)?;
-        sent = sent.checked_add(u64::try_from(count)?)
+        sent = sent
+            .checked_add(u64::try_from(count)?)
             .ok_or("file size counter overflow")?;
     }
 
@@ -252,7 +273,10 @@ fn receive_file(
     metadata: &FileMetadata,
 ) -> AppResult<PathBuf> {
     let (temporary_path, mut temporary_file) = create_temporary_file(output_directory)?;
-    let mut cleanup = TemporaryFileGuard { path: temporary_path.clone(), keep: false };
+    let mut cleanup = TemporaryFileGuard {
+        path: temporary_path.clone(),
+        keep: false,
+    };
     let mut hasher = Sha256::new();
     let mut received = 0_u64;
 
@@ -272,7 +296,9 @@ fn receive_file(
 
         hasher.update(chunk);
         temporary_file.write_all(chunk)?;
-        received = received.checked_add(chunk_size).ok_or("file size counter overflow")?;
+        received = received
+            .checked_add(chunk_size)
+            .ok_or("file size counter overflow")?;
     }
 
     let finish = channel.receive()?;
@@ -303,7 +329,12 @@ fn create_temporary_file(directory: &Path) -> AppResult<(PathBuf, File)> {
         getrandom::fill(&mut random)?;
         let name = format!(".lant-{}.part", hex_digest(&random));
         let path = directory.join(name);
-        match OpenOptions::new().write(true).read(true).create_new(true).open(&path) {
+        match OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(file) => return Ok((path, file)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.into()),
@@ -325,9 +356,16 @@ impl Drop for TemporaryFileGuard {
     }
 }
 
-fn commit_without_overwrite(temporary: &Path, directory: &Path, original_name: &str) -> AppResult<PathBuf> {
+fn commit_without_overwrite(
+    temporary: &Path,
+    directory: &Path,
+    original_name: &str,
+) -> AppResult<PathBuf> {
     let original = Path::new(original_name);
-    let stem = original.file_stem().and_then(|value| value.to_str()).ok_or("invalid file name")?;
+    let stem = original
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or("invalid file name")?;
     let extension = original.extension().and_then(|value| value.to_str());
 
     for index in 0_u32..10_000 {
@@ -363,8 +401,7 @@ fn validate_extension(name: &str) -> AppResult<()> {
         .to_ascii_lowercase();
 
     const ALLOWED: &[&str] = &[
-        "zip", "jpg", "jpeg", "png", "gif", "bmp", "webp",
-        "mp4", "mkv", "mov", "avi", "webm",
+        "zip", "jpg", "jpeg", "png", "gif", "bmp", "webp", "mp4", "mkv", "mov", "avi", "webm",
     ];
 
     if !ALLOWED.contains(&extension.as_str()) {
@@ -381,7 +418,11 @@ fn validate_filename(name: &str) -> AppResult<()> {
         return Err("file name cannot end with a dot or space".into());
     }
     if name.chars().any(|character| {
-        character.is_control() || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        character.is_control()
+            || matches!(
+                character,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            )
     }) {
         return Err("file name contains a character that is not allowed on Windows".into());
     }
@@ -411,16 +452,16 @@ fn resolve_first(input: &str) -> AppResult<SocketAddr> {
     input
         .to_socket_addrs()?
         .find(|address| is_lan_ip(address.ip()))
-        .ok_or_else(|| "receiver must resolve to a private, loopback, or link-local LAN address".into())
+        .ok_or_else(|| {
+            "receiver must resolve to a private, loopback, or link-local LAN address".into()
+        })
 }
 
 fn is_lan_ip(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(address) => {
             let octets = address.octets();
-            address.is_private()
-                || address.is_loopback()
-                || (octets[0] == 169 && octets[1] == 254)
+            address.is_private() || address.is_loopback() || (octets[0] == 169 && octets[1] == 254)
         }
         IpAddr::V6(address) => {
             let octets = address.octets();
@@ -465,7 +506,9 @@ mod tests {
 
     #[test]
     fn accepts_private_and_loopback_addresses_but_rejects_public_addresses() {
-        assert!(is_lan_ip("192.168.1.10".parse::<IpAddr>().expect("valid IP")));
+        assert!(is_lan_ip(
+            "192.168.1.10".parse::<IpAddr>().expect("valid IP")
+        ));
         assert!(is_lan_ip("10.0.0.4".parse::<IpAddr>().expect("valid IP")));
         assert!(is_lan_ip("127.0.0.1".parse::<IpAddr>().expect("valid IP")));
         assert!(!is_lan_ip("8.8.8.8".parse::<IpAddr>().expect("valid IP")));

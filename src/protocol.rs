@@ -2,9 +2,9 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use snow::{params::NoiseParams, Builder, TransportState};
+use snow::{Builder, TransportState, params::NoiseParams};
 
-use crate::{pairing::PairingSecret, AppResult};
+use crate::{AppResult, pairing::PairingSecret};
 
 const NOISE_PATTERN: &str = "Noise_NNpsk0_25519_ChaChaPoly_BLAKE2s";
 const MAX_WIRE_FRAME: usize = 64 * 1024;
