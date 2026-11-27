@@ -2,11 +2,13 @@
 
 ## Stable compiler baseline
 
-The repository pins the stable Rust compiler to `1.100.0`. Current official `*-pc-windows-msvc` Rust targets require Windows 10 or newer. Therefore, compiling this project for `x86_64-pc-windows-msvc` does **not** establish Windows 8 compatibility.
+The repository pins the stable Rust compiler to `1.100.0`. Current official `*-pc-windows-msvc` Rust targets require Windows 10 or newer. Therefore, compiling this project for `x86_64-pc-windows-msvc` does **not** establish Windows 8 compatibility. See the [official Rust MSVC target requirements](https://doc.rust-lang.org/stable/rustc/platform-support/windows-msvc.html).
 
 ## Legacy target path
 
-Rust documents Tier 3 targets `i686-win7-windows-msvc` and `x86_64-win7-windows-msvc`. These targets are intended to continue Windows 7 compatibility, but Rust does not distribute prebuilt standard-library artifacts for them. Building requires building the standard library from source (for example with nightly `-Z build-std`) or building a custom Rust toolchain. Tier 3 does not provide the same automated build/test guarantees as Tier 1.
+The current Rust platform table lists `i686-win7-windows-msvc` and `x86_64-win7-windows-msvc` as Tier 3 targets intended for Windows 7 compatibility. Rust's Tier 3 policy explicitly states that these targets are not built or tested automatically and that official builds are unavailable. The table marks standard-library source support, but that is not the same as a prebuilt `rust-std` component distributed by rustup. Building therefore requires building the standard library from source (for example with nightly `-Z build-std`) or creating a custom Rust toolchain. Tier 3 does not provide the same automated build/test guarantees as Tier 1. See the [Rust platform support table and Tier 3 policy](https://doc.rust-lang.org/stable/rustc/platform-support.html).
+
+The exact availability and build path of this target with the pinned Rust `1.100.0` toolchain have **not** been confirmed in this project yet. Verify it on a clean Windows build host before designing the legacy release pipeline.
 
 An experimental x64 build attempt may look like this on a supported build host:
 
@@ -30,4 +32,4 @@ This command uses a nightly compiler and is **not** a reproducible Rust 1.100.0 
 
 ## Security status of old Windows versions
 
-Windows 8.1 stopped receiving security updates on 10 January 2023. Windows 8 reached end of support earlier. A transfer application cannot compensate for an unpatched operating system. Use a supported Windows release for sensitive transfers whenever possible.
+Windows 8 reached end of support on 13 January 2016, and Windows 8.1 reached end of support on 10 January 2023. Neither receives normal Windows security updates. A transfer application cannot compensate for an unpatched operating system. Use a supported Windows release for sensitive transfers whenever possible. See the [Microsoft Windows 8 lifecycle](https://learn.microsoft.com/en-us/lifecycle/products/windows-8) and [Windows 8.1 lifecycle](https://learn.microsoft.com/en-us/lifecycle/products/windows-81).

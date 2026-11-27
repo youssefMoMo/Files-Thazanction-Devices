@@ -46,7 +46,9 @@ pub fn run_receive(bind: &str, output_directory: &Path) -> AppResult<()> {
     println!("{}", crate::APP_NAME);
     println!("Listening for one paired transfer on {local}");
     println!("Enter this one-time pairing code on the sending computer:");
-    println!("\n  {}\n", secret.to_code());
+    let pairing_code = secret.to_code();
+    println!("\n  {}\n", pairing_code.as_str());
+    drop(pairing_code);
     println!("The code expires in 5 minutes and is consumed by the first authenticated sender.");
     println!(
         "No router/Internet relay is used. Use a LAN IP address and allow the port only on your private network."
@@ -71,10 +73,14 @@ pub fn run_receive(bind: &str, output_directory: &Path) -> AppResult<()> {
                 }
 
                 match accept_secure(stream, &secret) {
-                    Ok(channel) => {
+                    Ok(channel) if Instant::now() < deadline => {
                         println!("Pairing authenticated successfully.");
                         accepted_channel = Some(channel);
                         break;
+                    }
+                    Ok(_) => {
+                        eprintln!("Rejected a pairing that completed after the code expired.");
+                        rejected_connections += 1;
                     }
                     Err(error) => {
                         eprintln!("Rejected unauthenticated connection: {error}");
@@ -137,6 +143,7 @@ pub fn run_send(receiver: &str, file_path: &Path) -> AppResult<()> {
         "Enter the one-time pairing code: ",
     )?);
     let secret = PairingSecret::from_code(code.trim())?;
+    drop(code);
     let file_path = file_path.canonicalize()?;
     let mut source_file = File::open(&file_path)?;
     let metadata = source_file.metadata()?;
@@ -431,10 +438,16 @@ fn validate_filename(name: &str) -> AppResult<()> {
         .unwrap_or_default()
         .trim_end_matches([' ', '.'])
         .to_ascii_uppercase();
-    let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (base.len() == 4
-            && (base.starts_with("COM") || base.starts_with("LPT"))
-            && matches!(base.as_bytes()[3], b'1'..=b'9'));
+    let numbered_device = ["COM", "LPT"].iter().any(|prefix| {
+        matches!(
+            base.strip_prefix(prefix),
+            Some("1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+        )
+    });
+    let reserved = matches!(
+        base.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || numbered_device;
     if reserved {
         return Err("file name is reserved by Windows".into());
     }
@@ -482,9 +495,48 @@ fn hex_digest(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
+    use std::fs;
+    use std::net::{IpAddr, TcpListener, TcpStream};
+    use std::path::PathBuf;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
-    use super::{is_lan_ip, validate_extension, validate_filename};
+    use sha2::{Digest, Sha256};
+
+    use crate::pairing::PairingSecret;
+    use crate::protocol::{accept_secure, connect_secure, set_handshake_timeouts};
+
+    use super::{
+        CHUNK_SIZE, FileMetadata, MSG_ACCEPT, MSG_TRANSFER_COMPLETE, is_lan_ip,
+        receive_file, receive_metadata, send_file, send_metadata, validate_extension,
+        validate_filename,
+    };
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let mut nonce = [0_u8; 16];
+            getrandom::fill(&mut nonce).expect("secure random source available");
+            let path = std::env::temp_dir().join(format!(
+                "lan-transfer-core-test-{}-{}",
+                std::process::id(),
+                super::hex_digest(&nonce)
+            ));
+            fs::create_dir(&path).expect("create unique test directory");
+            Self(path)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn accepts_supported_file_names() {
@@ -499,6 +551,9 @@ mod tests {
         assert!(validate_filename("..\\secret.jpg").is_err());
         assert!(validate_filename("folder/file.jpg").is_err());
         assert!(validate_filename("CON.jpg").is_err());
+        assert!(validate_filename("CONIN$.jpg").is_err());
+        assert!(validate_filename("COM1.png").is_err());
+        assert!(validate_filename("LPT³.zip").is_err());
         assert!(validate_filename("name. ").is_err());
     }
 
@@ -516,5 +571,96 @@ mod tests {
     fn rejects_unsupported_extensions() {
         assert!(validate_extension("setup.exe").is_err());
         assert!(validate_extension("document.pdf").is_err());
+    }
+
+    #[test]
+    fn loopback_transfer_verifies_content_and_never_overwrites_existing_file() {
+        let root = TestDirectory::new();
+        let source_directory = root.path().join("source");
+        let destination_directory = root.path().join("destination");
+        fs::create_dir(&source_directory).expect("create source directory");
+        fs::create_dir(&destination_directory).expect("create destination directory");
+
+        let source_path = source_directory.join("sample.zip");
+        let existing_path = destination_directory.join("sample.zip");
+        let payload: Vec<u8> = (0..(CHUNK_SIZE * 2 + 19))
+            .map(|index| u8::try_from(index % 251).expect("value fits in a byte"))
+            .collect();
+        fs::write(&source_path, &payload).expect("write source fixture");
+        fs::write(&existing_path, b"keep this existing file")
+            .expect("write existing destination fixture");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        listener
+            .set_nonblocking(true)
+            .expect("set listener nonblocking");
+        let address = listener.local_addr().expect("read loopback address");
+        let secret = PairingSecret::generate().expect("secure random source available");
+        let receiver_secret = secret.clone();
+        let receiver_directory = destination_directory.clone();
+
+        let receiver = thread::spawn(move || -> crate::AppResult<PathBuf> {
+            let accept_deadline = Instant::now() + Duration::from_secs(5);
+            let stream = loop {
+                match listener.accept() {
+                    Ok((stream, _peer)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= accept_deadline {
+                            return Err("timed out waiting for loopback sender".into());
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            };
+
+            // Reproduce the receiver's production accept path exactly: the
+            // listener is nonblocking, but the accepted stream must be
+            // normalized before performing the Noise handshake.
+            set_handshake_timeouts(&stream)?;
+            let mut channel = accept_secure(stream, &receiver_secret)?;
+            let metadata = receive_metadata(&mut channel)?;
+            validate_filename(&metadata.name)?;
+            validate_extension(&metadata.name)?;
+            channel.send(&[MSG_ACCEPT])?;
+            receive_file(&mut channel, &receiver_directory, &metadata)
+        });
+
+        let stream = TcpStream::connect(address).expect("connect loopback sender");
+        set_handshake_timeouts(&stream).expect("configure sender socket");
+        let mut channel =
+            connect_secure(stream, &secret).expect("complete authenticated handshake");
+        let metadata = FileMetadata {
+            name: "sample.zip".to_owned(),
+            size: u64::try_from(payload.len()).expect("fixture length fits in u64"),
+        };
+        send_metadata(&mut channel, &metadata).expect("send metadata");
+        assert_eq!(channel.receive().expect("receive approval"), vec![MSG_ACCEPT]);
+
+        let mut source_file = fs::File::open(&source_path).expect("open source fixture");
+        let sent_hash = send_file(&mut channel, &mut source_file, metadata.size)
+            .expect("send complete file");
+        let expected_hash: [u8; 32] = Sha256::digest(&payload).into();
+        assert_eq!(sent_hash, expected_hash);
+        assert_eq!(
+            channel.receive().expect("receive completion acknowledgement"),
+            vec![MSG_TRANSFER_COMPLETE]
+        );
+        drop(source_file);
+        drop(channel);
+
+        let saved_path = receiver
+            .join()
+            .expect("receiver thread must not panic")
+            .expect("receiver must verify and commit the file");
+        assert_eq!(
+            saved_path.file_name().and_then(|name| name.to_str()),
+            Some("sample (1).zip")
+        );
+        assert_eq!(fs::read(&saved_path).expect("read received file"), payload);
+        assert_eq!(
+            fs::read(&existing_path).expect("read pre-existing file"),
+            b"keep this existing file"
+        );
     }
 }

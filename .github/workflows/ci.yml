@@ -4,24 +4,35 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: Windows x64 / Rust 1.100.0
     runs-on: windows-latest
+    timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out source
+        uses: actions/checkout@v4
+
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
-      - name: Generate lockfile when not present
         shell: pwsh
-        run: |
-          if (-not (Test-Path -LiteralPath 'Cargo.lock')) {
-            cargo +1.100.0 generate-lockfile
-          }
-      - name: Format
+        run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
+
+      - name: Verify formatting
         run: cargo +1.100.0 fmt --check
-      - name: Clippy
+
+      - name: Run Clippy
         run: cargo +1.100.0 clippy --locked --all-targets -- -D warnings
-      - name: Tests
+
+      - name: Run tests
         run: cargo +1.100.0 test --locked --all-targets
-      - name: Release build
+
+      - name: Build release executable
         run: cargo +1.100.0 build --locked --release

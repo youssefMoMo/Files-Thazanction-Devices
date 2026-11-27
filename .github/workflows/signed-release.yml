@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,26 +12,40 @@ permissions:
 
 jobs:
   build-and-sign:
+    name: Build, sign, and verify Windows x64 artifact
     runs-on: windows-latest
     timeout-minutes: 45
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
+
+      - name: Validate signed build ref
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:EVENT_NAME -eq 'workflow_dispatch' -and
+              $env:REF_TYPE -eq 'branch' -and $env:REF_NAME -ne 'main') {
+            throw 'Manual signed builds are allowed only from main or a version tag.'
+          }
+          if ($env:REF_TYPE -eq 'tag' -and
+              $env:REF_NAME -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw 'Signed release tags must use the exact vMAJOR.MINOR.PATCH form.'
+          }
 
       - name: Install pinned Rust toolchain
         shell: pwsh
         run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
 
-      - name: Generate dependency lockfile when not committed yet
-        shell: pwsh
-        run: |
-          if (-not (Test-Path -LiteralPath 'Cargo.lock')) {
-            cargo +1.100.0 generate-lockfile
-          }
-
       - name: Verify formatting
         run: cargo +1.100.0 fmt --check
+
+      - name: Run Clippy
+        run: cargo +1.100.0 clippy --locked --all-targets -- -D warnings
 
       - name: Run tests
         run: cargo +1.100.0 test --locked --all-targets
@@ -67,13 +82,16 @@ jobs:
           SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $required = @{
             SIGNPATH_API_TOKEN = $env:SIGNPATH_API_TOKEN
             SIGNPATH_ORGANIZATION_ID = $env:SIGNPATH_ORGANIZATION_ID
             SIGNPATH_PROJECT_SLUG = $env:SIGNPATH_PROJECT_SLUG
             SIGNPATH_SIGNING_POLICY_SLUG = $env:SIGNPATH_SIGNING_POLICY_SLUG
           }
-          $missing = $required.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } | ForEach-Object { $_.Key }
+          $missing = $required.GetEnumerator() |
+            Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } |
+            ForEach-Object { $_.Key }
           if ($missing) {
             throw "Trusted signing is not configured. Missing GitHub secret/variables: $($missing -join ', '). No unsigned release will be published. See docs/smart-app-control.md."
           }
@@ -92,7 +110,7 @@ jobs:
           output-artifact-directory: ${{ github.workspace }}\signed
           skip-decompress: true
 
-      - name: Verify every executable signature and assemble release package
+      - name: Verify signatures and assemble release package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -108,11 +126,15 @@ jobs:
 
           & ./scripts/Verify-Authenticode.ps1 -Directory dist
 
-          $version = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } else { 'workflow-' + $env:GITHUB_SHA.Substring(0, 12) }
+          $version = if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $env:GITHUB_REF_NAME
+          } else {
+            'workflow-' + $env:GITHUB_SHA.Substring(0, 12)
+          }
           @(
             "Version: $version"
             "Commit: $env:GITHUB_SHA"
-            "Rust: 1.100.0"
+            'Rust: 1.100.0'
             'Platform: x86_64-pc-windows-msvc'
             'Signing: Authenticode signature verified by release workflow'
           ) | Set-Content -LiteralPath 'dist/BUILD-INFO.txt' -Encoding utf8

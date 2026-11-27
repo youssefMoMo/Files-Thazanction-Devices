@@ -1,0 +1,39 @@
+LAN Transfer Core — source package handoff
+Package date: 2026-11-27
+Package type: source code + CI/signing workflow configuration
+Project version: 0.1.0
+Rust toolchain target: 1.100.0
+Target platform: Windows x64 (MSVC)
+
+This is a source package, NOT a prebuilt or Authenticode-signed Windows release.
+No EXE, target directory, signing certificate, private key, GitHub secret, or
+SignPath credential is included.
+
+Included engineering changes:
+- Explicitly restore accepted TCP sockets to blocking mode before Noise handshake I/O.
+- Retain bounded handshake I/O and the absolute handshake deadline.
+- Add a regression test for the accepted socket from a nonblocking listener.
+- Add a loopback multi-chunk transfer test for SHA-256, completion, and no-overwrite behavior.
+- Improve pairing-code length diagnostics.
+- Restore Windows CI and fail-closed signed-release workflows; enable manual signed workflow runs.
+- Record the owner's Windows / Smart App Control evidence and outstanding acceptance gates.
+- Add stable LF line-ending attributes.
+
+Validation performed while packaging:
+- TOML syntax parse: passed.
+- GitHub Actions YAML syntax parse: passed.
+- Workflow command/gate presence checks: passed.
+- Socket fix wiring and regression-test presence checks: passed.
+- Whitespace / TODO / unimplemented / binary / key-file scans: passed.
+- ZIP integrity and extracted-file checks: performed after archive creation.
+
+Not performed in this environment:
+- Rust formatting, compilation, Clippy, or test execution (Rust toolchain unavailable).
+- Windows runtime or two-PC LAN transfer testing.
+- SignPath enrollment, Authenticode signing, or Smart App Control launch verification.
+
+The signed-release workflow will fail closed until the repository owner enrolls
+with a trusted signing provider and configures the required GitHub secret and
+repository variables documented in docs/smart-app-control.md.
+
+No Git commit, push, release, or signing request was performed.

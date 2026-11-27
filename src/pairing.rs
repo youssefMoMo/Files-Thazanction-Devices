@@ -23,9 +23,15 @@ impl PairingSecret {
                 .flat_map(char::to_uppercase)
                 .collect::<String>(),
         );
+        if normalized.len() != 52 {
+            return Err(
+                "pairing code must contain the 52 Base32 characters displayed by the receiver"
+                    .into(),
+            );
+        }
         let decoded = Zeroizing::new(BASE32_NOPAD.decode(normalized.as_bytes())?);
         if decoded.len() != 32 {
-            return Err("pairing code must encode exactly 256 bits".into());
+            return Err("pairing code must decode to exactly 256 bits".into());
         }
 
         let mut key = Zeroizing::new([0_u8; 32]);
@@ -33,14 +39,20 @@ impl PairingSecret {
         Ok(Self(key))
     }
 
-    pub fn to_code(&self) -> String {
-        let encoded = BASE32_NOPAD.encode(&self.0[..]);
-        encoded
-            .as_bytes()
-            .chunks(4)
-            .map(|chunk| std::str::from_utf8(chunk).unwrap_or_default())
-            .collect::<Vec<_>>()
-            .join("-")
+    /// Encode the pairing secret into a displayable code whose temporary
+    /// representation is zeroized when the caller drops it.
+    pub fn to_code(&self) -> Zeroizing<String> {
+        let encoded = Zeroizing::new(BASE32_NOPAD.encode(&self.0[..]));
+        let mut code = Zeroizing::new(String::with_capacity(encoded.len() + 12));
+
+        for (index, byte) in encoded.as_bytes().iter().enumerate() {
+            if index > 0 && index % 4 == 0 {
+                code.push('-');
+            }
+            code.push(char::from(*byte));
+        }
+
+        code
     }
 
     pub(crate) fn as_bytes(&self) -> &[u8; 32] {
@@ -56,7 +68,7 @@ mod tests {
     fn pairing_code_round_trips() {
         let original = PairingSecret::generate().expect("secure random source available");
         let code = original.to_code();
-        let restored = PairingSecret::from_code(&code).expect("generated code is valid");
+        let restored = PairingSecret::from_code(code.as_str()).expect("generated code is valid");
         assert_eq!(original.as_bytes(), restored.as_bytes());
     }
 

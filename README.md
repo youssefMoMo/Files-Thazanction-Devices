@@ -46,14 +46,14 @@
 
 ## البناء والاختبار
 
-لا يحتوي هذا التسليم على `Cargo.lock` مولّد؛ سيُنشئه Cargo عند أول عملية بناء. قبل نشر أي إصدار عام، شغّل البناء والاختبارات على بيئة Windows المستهدفة ثم أضف `Cargo.lock` الناتج إلى Git لضبط الاعتماديات الانتقالية.
+يحتوي هذا التسليم على `Cargo.lock` لتثبيت الاعتماديات الانتقالية. استخدم `--locked` في البناء والاختبارات حتى لا تتغير شجرة الاعتماديات بصمت، وراجع تحديثات الاعتماديات أمنيًا قبل دمجها.
 
 ```powershell
 rustup show
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-cargo build --release
+cargo +1.100.0 fmt --check
+cargo +1.100.0 clippy --locked --all-targets -- -D warnings
+cargo +1.100.0 test --locked --all-targets
+cargo +1.100.0 build --locked --release
 ```
 
 ## تجربة النقل
@@ -98,6 +98,11 @@ cargo run --release -- send 192.168.1.20:45123 "$env:USERPROFILE\Pictures\photo.
 
 راجع `docs/windows-compatibility.md` قبل محاولة البناء على نظام قديم.
 
+راجع [`docs/security-audit-initial-2026-11-27.md`](docs/security-audit-initial-2026-11-27.md)
+للاطلاع على نطاق المراجعة الأولية، والإصلاحات التي ما زالت تحتاج إلى تحقق، والمخاطر المفتوحة.
+راجع أيضًا [`docs/validation-status-2026-11-27.md`](docs/validation-status-2026-11-27.md)
+لسجل نتائج Windows التي قدمها مالك المشروع وبوابات القبول المتبقية.
+
 
 ## Smart App Control compatibility
 
@@ -113,7 +118,9 @@ does not sign these temporary build tools. On a PC affected by this policy,
 use the GitHub-hosted build workflow rather than disabling Smart App Control.
 The signed-release workflow intentionally fails closed and will not publish an
 unsigned executable. It requires the repository owner to complete a trusted
-signing-provider setup first.
+signing-provider setup first. The regular CI build is unsigned and is only for
+build/test validation; do not attempt to run its EXE on a PC where Smart App
+Control blocks unsigned applications. A source ZIP is not a signed binary.
 
 The release workflow currently signs the CLI executable only. When the app
 adds a GUI, DLLs, helper executables, updater, or installer, each executable

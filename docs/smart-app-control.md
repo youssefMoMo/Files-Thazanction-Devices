@@ -5,8 +5,17 @@
 The Code Integrity event supplied during development contains policy ID
 `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`. Microsoft identifies this as the
 `VerifiedAndReputableDesktop` base policy used when Smart App Control is On.
-The blocked files were Cargo-generated build-script executables under
-`target\debug\build\...\out\build_script_build.exe`.
+The earlier blocked files included Cargo-generated build-script executables under
+`target\debug\build\...\out\build_script_build.exe`. A later attempt to
+launch `target\release\lan-transfer-core.exe` was also blocked before the
+application started.
+
+The correlated Code Integrity events for that Release executable reported
+`TotalSignatureCount=0`, `PublisherName=Unknown`, `IssuerName=Unknown`, and
+`KnownRoot=0`. `Get-AuthenticodeSignature` reported `NotSigned`. The SHA-256
+flat hash recorded by Code Integrity matched the PowerShell hash supplied by
+the project owner. This confirms that this exact binary had no embedded
+Authenticode signature; it does not indicate that the executable was corrupted.
 
 This is not evidence that those Rust crates are malware. Cargo compiles each
 crate's `build.rs` into an executable and runs it during the build. Smart App
@@ -30,12 +39,15 @@ retroactively sign those short-lived Cargo build tools.
 
 ## Release signing
 
-The repository includes `.github/workflows/signed-release.yml`. It builds the
-source on a GitHub-hosted Windows runner, uploads the unsigned executable as a
-workflow artifact, submits that artifact to SignPath, verifies the returned
-Authenticode signature, and only then creates the downloadable ZIP artifact.
-The workflow fails closed: it does not publish an unsigned release if signing
-is not configured or the signature is invalid.
+The repository includes `.github/workflows/ci.yml` and
+`.github/workflows/signed-release.yml`. CI builds and tests the source on a
+GitHub-hosted Windows runner. The signed-release workflow builds and tests
+again, uploads the unsigned executable to the trusted signing service, verifies
+the returned Authenticode signature, and only then creates a downloadable ZIP
+artifact. The workflow fails closed: it does not publish an unsigned release
+if signing is not configured or the signature is invalid. It can be started by
+pushing a `vMAJOR.MINOR.PATCH` tag or manually from the GitHub Actions page on
+`main` (or a version tag).
 
 ### SignPath setup required by the repository owner
 
@@ -63,7 +75,15 @@ steps:
    - `SIGNPATH_PROJECT_SLUG`
    - `SIGNPATH_SIGNING_POLICY_SLUG`
 
-7. Push a version tag such as `v0.1.0`, or run the workflow manually.
+7. After the SignPath configuration has been validated, push a version tag
+   such as `v0.1.0`, or open GitHub Actions → Signed Windows Release → Run
+   workflow while selecting `main` (or a valid version tag).
+
+Until these external steps are completed, the signed workflow intentionally
+fails at its configuration gate. A source ZIP, a locally built EXE, a GitHub
+CI artifact, or a self-signed certificate is not a substitute for the
+production-signed Windows executable. The workflow configuration alone cannot
+enroll the repository or create a trusted signing identity.
 
 SignPath's GitHub integration verifies that artifacts originate from a GitHub
 workflow and that open-source signing jobs use GitHub-hosted runners. The
@@ -86,7 +106,11 @@ The final application's signature cannot solve this earlier compiler-stage
 problem.
 
 For this machine, use the GitHub-hosted build workflow and download the signed
-release artifact. If interactive local compilation is required, use a separate
+release artifact only after the repository owner has completed the trusted
+signing-provider setup. The ordinary CI job produces an unsigned build for
+validation; it is not intended to be launched on a Smart App Control-enforced
+PC. If the signing provider is not configured, no runnable signed artifact is
+available yet. If interactive local compilation is required, use a separate
 supported development environment rather than lowering protection on the
 primary PC. Do not copy unsigned `target` executables from CI to a Smart App
 Control-enforced PC.
